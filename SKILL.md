@@ -22,27 +22,52 @@ Esta skill proporciona la guía técnica, runbooks de diagnóstico, consultas SQ
 
 ---
 
-## 2. Base de Datos (PostgreSQL), Índices Compuestos y Observabilidad
-
-### Dashboard de Rendimiento de DB en Tiempo Real
-- **Ubicación:** Accesible para Super Admins en `/super_admins/dashboard?tab=db_performance` (controlado por [`SuperAdmins::DashboardController`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/app/controllers/super_admins/dashboard_controller.rb)).
-- **Métricas:** Ordenadas por mayor criticidad (`idx_use_pct ASC NULLS FIRST, seq_scan DESC`) con badges visuales (🔴 $<50\%$, 🟡 $50-80\%$, 🟢 $>80\%$).
-
-### Índices Compuestos Creados ([`db/migrate/20260727233000_add_performance_composite_indexes.rb`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/db/migrate/20260727233000_add_performance_composite_indexes.rb))
-Todas las adiciones de índices en producción se realizan con `disable_ddl_transaction!` y `algorithm: :concurrently` (Zero Downtime):
-1. `teams`: `[:club_id, :active]` (Resuelve ~465k escaneos secuenciales).
-2. `roster_entries`: `[:team_id, :season_id, :active]` (Resuelve ~400k escaneos secuenciales).
-3. `clubs`: `[:fmvoley_sync_enabled, :trial_period_active]` (Resuelve ~240k escaneos secuenciales).
-4. `matches`: `[:team_id, :season_id, :start_time]` (Resuelve ~233k escaneos secuenciales).
-5. `users`: `[:club_id, :role]` (Resuelve ~220k escaneos secuenciales).
-6. `team_coaches`: `[:team_id, :season_id]` (Resuelve ~104k escaneos secuenciales).
-7. `standings`: `[:season_id, :team_id]` (Resuelve ~38k escaneos secuenciales).
-8. `attendances`: `[:training_session_id, :player_id, :status]` (Resuelve ~31k escaneos secuenciales).
+## 2. Base de Datos (PostgreSQL) y Conexiones
 
 ### Alineación del Pool de Conexiones
-- **Regla del Pool:** En [`config/database.yml`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/config/database.yml), `pool` se configura dinámicamente con `ENV.fetch("RAILS_MAX_THREADS") { 5 }`.
+- **Regla del Pool:** El valor de `pool` en `config/database.yml` debe ser **mayor o igual** que `RAILS_MAX_THREADS` por worker de Puma.
 - **Fórmula de Conexiones Totales:**
   $$\text{Conexiones a DB} = (\text{Workers Puma} \times \text{RAILS\_MAX\_THREADS}) + \text{Conexiones de Background Workers}$$
+- Si la suma total de conexiones supera las 100 en un solo nodo de PostgreSQL, debe desplegarse **PgBouncer** en modo `transaction`.
+
+### Consultas de Diagnóstico de PostgreSQL
+
+#### Detectar las 5 Consultas Más Lentas (`pg_stat_statements`)
+```sql
+SELECT 
+    calls,
+    round(total_exec_time::numeric, 2) AS total_time_ms,
+    round(mean_exec_time::numeric, 2) AS avg_time_ms,
+    round((100.0 * total_exec_time / sum(total_exec_time) OVER ())::numeric, 2) AS percentage,
+    query
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 5;
+```
+
+#### Identificar Tablas con Secuencia de Escaneo Sin Índice (Table Scans)
+```sql
+SELECT 
+    relname AS table_name,
+    seq_scan,
+    seq_tup_read,
+    idx_scan,
+    idx_tup_fetch,
+    round(100.0 * idx_scan / nullif(seq_scan + idx_scan, 0), 2) AS idx_use_pct
+FROM pg_stat_user_tables
+WHERE seq_scan > 1000
+ORDER BY seq_scan DESC;
+```
+
+#### Medir Saturación del Pool de Conexiones Activas
+```sql
+SELECT 
+    count(*) AS total_connections,
+    state,
+    application_name
+FROM pg_stat_activity
+GROUP BY state, application_name;
+```
 
 ---
 
@@ -77,8 +102,8 @@ Todas las adiciones de índices en producción se realizan con `disable_ddl_tran
 ## 5. Resiliencia y Rate Limiting
 
 ### Protección contra Tráfico Abusivo
-- **Rack::Attack ([`config/initializers/rack_attack.rb`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/config/initializers/rack_attack.rb)):** Limita peticiones de actualización de marcador a 120 req/min por IP y limita tráfico general a 1000 req/5min por IP, bloqueando bots sospechosos.
-- **Timeouts en HTTP Externo:** Las integraciones externas (envío de correos por Resend/AWS SES, scraping de FMVOLEY) DEBEN incluir timeouts estrictos (ej. `open_timeout: 2`, `read_timeout: 5`) para evitar bloquear los hilos síncronos de Puma.
+- **Rack::Attack:** Toda ruta de login (`/users/sign_in`), registro de usuarios y peticiones de importación masiva debe estar limitada en tasa por dirección IP.
+- **Timeouts en HTTP Externo:** Las integraciones externas (envío de correos por AWS SES, notificaciones push por WebPush, scraping de FMVOLEY) DEBEN incluir timeouts estrictos (ej. `open_timeout: 3`, `read_timeout: 5`) para evitar bloquear los hilos síncronos de Puma o los workers de background jobs.
 - **Descarga Asíncrona:** El procesamiento de background jobs (envío de push notifications, optimización de imágenes, sincronizaciones de tablas) NUNCA debe ejecutarse sincrónicamente en el hilo del controlador de Rails.
 
 ---
@@ -104,7 +129,7 @@ export const options = {
 };
 
 export default function () {
-  const res = http.get('https://vmanager.club/matches');
+  const res = http.get('https://tu-dominio.com/matches');
   check(res, { 'status is 200': (r) => r.status === 200 });
   sleep(1);
 }
