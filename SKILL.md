@@ -30,6 +30,19 @@ Esta skill proporciona la guía técnica, runbooks de diagnóstico, consultas SQ
   $$\text{Conexiones a DB} = (\text{Workers Puma} \times \text{RAILS\_MAX\_THREADS}) + \text{Conexiones de Background Workers}$$
 - Si la suma total de conexiones supera las 100 en un solo nodo de PostgreSQL, debe desplegarse **PgBouncer** en modo `transaction`.
 
+### Índices Compuestos Creados ([`db/migrate/20260727233000_add_performance_composite_indexes.rb`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/db/migrate/20260727233000_add_performance_composite_indexes.rb) y [`20260728100000_add_remaining_sre_performance_indexes.rb`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/db/migrate/20260728100000_add_remaining_sre_performance_indexes.rb))
+Todas las adiciones de índices en producción se realizan con `disable_ddl_transaction!` y `algorithm: :concurrently` (Zero Downtime):
+1. `teams`: `[:club_id, :active]` (Resuelve ~465k escaneos secuenciales).
+2. `roster_entries`: `[:team_id, :season_id, :active]` (Resuelve ~400k escaneos secuenciales).
+3. `clubs`: `[:fmvoley_sync_enabled, :trial_period_active]` (Resuelve ~240k escaneos secuenciales).
+4. `matches`: `[:team_id, :season_id, :start_time]` (Resuelve ~233k escaneos secuenciales).
+5. `users`: `[:club_id, :role]` (Resuelve ~220k escaneos secuenciales).
+6. `team_coaches`: `[:team_id, :season_id]` (Resuelve ~104k escaneos secuenciales).
+7. `standings`: `[:season_id, :team_id]` (Resuelve ~38k escaneos secuenciales).
+8. `attendances`: `[:training_session_id, :player_id, :status]` (Resuelve ~31k escaneos secuenciales).
+9. `authentication_logs`: `[:user_id, :created_at]` y `:created_at` (Resuelve ~7k escaneos secuenciales).
+10. `active_storage_attachments`: `[:record_type, :name, :record_id]` (Resuelve ~6.6k escaneos secuenciales en `player_documents`).
+
 ### Consultas de Diagnóstico de PostgreSQL
 
 #### Detectar las 5 Consultas Más Lentas (`pg_stat_statements`)
