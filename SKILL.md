@@ -20,6 +20,10 @@ Esta skill proporciona la guía técnica, runbooks de diagnóstico, consultas SQ
 - **Asignador de Memoria (`jemalloc`):** En contenedores Linux de producción, precarga `jemalloc` (`LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2`) para prevenir la fragmentación de memoria.
 - **Single-Line Logging:** Usa la gema `lograge` configurada en [`config/environments/production.rb`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/config/environments/production.rb) para omitir peticiones a assets/healthcheck y emitir logs limpios de una sola línea.
 
+### Dashboard de Rendimiento de DB en Tiempo Real
+- **Ubicación:** Accesible para Super Admins en `/super_admins/dashboard?tab=db_performance` (controlado por [`SuperAdmins::DashboardController`](file:///Users/franco.rodriguez/Documents/code/personal/volley_manager/app/controllers/super_admins/dashboard_controller.rb)).
+- **Métricas:** Ordenadas por nivel de criticidad técnica de mayor a menor urgencia (🔴 **Crítico** primero $\rightarrow$ 🟡 **Atención** en medio $\rightarrow$ 🟢 **Óptimo** al final del todo), con badges visuales descriptivos.
+
 ---
 
 ## 2. Base de Datos (PostgreSQL) y Conexiones
